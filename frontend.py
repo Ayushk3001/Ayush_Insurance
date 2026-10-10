@@ -50,6 +50,51 @@ st.markdown("""
     .badge-green { background-color: #DEF7EC; color: #03543F; }
     .badge-yellow { background-color: #FEF08A; color: #854D0E; }
     .badge-red { background-color: #FDE8E8; color: #9B1C1C; }
+
+    /* Fix Streamlit metric value text truncation */
+    [data-testid="stMetricValue"] {
+        font-size: 1.35rem !important;
+        white-space: normal !important;
+        overflow: visible !important;
+        text-overflow: unset !important;
+        word-break: break-word !important;
+    }
+    [data-testid="stMetricValue"] > div {
+        white-space: normal !important;
+        overflow: visible !important;
+        text-overflow: unset !important;
+        line-height: 1.25 !important;
+    }
+    [data-testid="stMetricLabel"] {
+        font-size: 0.92rem !important;
+        font-weight: 600 !important;
+        color: #334155 !important;
+    }
+
+    /* Modern LangGraph state card and pills */
+    .langgraph-card {
+        background: #F8FAFC;
+        border: 1px solid #CBD5E1;
+        border-radius: 10px;
+        padding: 12px 18px;
+        margin: 12px 0 18px 0;
+        font-size: 0.9rem;
+    }
+    .step-pill {
+        display: inline-block;
+        background: #E2E8F0;
+        color: #1E293B;
+        padding: 2px 10px;
+        border-radius: 6px;
+        font-size: 0.82rem;
+        font-weight: 500;
+        margin: 2px 0;
+    }
+    .step-arrow {
+        color: #64748B;
+        font-weight: bold;
+        margin: 0 4px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -72,21 +117,61 @@ st.sidebar.success(f"⚡ Vector DB: {vector_count if vector_count > 0 else 2000}
 st.sidebar.info("🤖 Models: Hybrid RAG + Random Forest + Multi-Agent")
 st.sidebar.markdown("---")
 
-df_sample = load_claims_dataset()
+@st.cache_data
+def get_cached_claims_dataset():
+    return load_claims_dataset()
+
+df_sample = get_cached_claims_dataset()
+
+
+def generate_sample_description(claim_type: str, amount: float, state: str) -> str:
+    """Generate realistic, line-of-business specific loss narratives for loaded samples."""
+    c_type = str(claim_type or "").strip().lower()
+    if "auto" in c_type:
+        if amount > 20000:
+            return f"Severe multi-vehicle collision on highway in {state}. Heavy front-end and structural frame damage, airbag deployment, vehicle towed from scene."
+        elif amount > 5000:
+            return f"Side-impact collision at traffic intersection in {state}. Driver side door, quarter panel, and wheel alignment damage."
+        elif amount < 1000:
+            return f"Stone struck windshield while driving on interstate in {state}. 12-inch spider crack across passenger viewing area."
+        else:
+            return f"Vehicle rear bumper and tailgate damaged in low-speed parking lot collision in {state}. No injuries reported."
+    elif "home" in c_type or "property" in c_type:
+        if amount > 25000:
+            return f"Severe storm in {state} caused tree limb to fall onto roof, puncturing shingles and causing substantial interior water intrusion into bedrooms."
+        elif amount > 8000:
+            return f"Upstairs master bathroom plumbing pipe burst overnight in {state}, resulting in drywall ceiling collapse and hardwood flooring saturation."
+        else:
+            return f"Basement water seepage following heavy rainfall in {state}. Minor drywall damage and ruined stored personal belongings."
+    elif "renters" in c_type or "tenant" in c_type:
+        if amount > 5000:
+            return f"Apartment burglary in {state} while resident was at work. Forced entry through rear sliding door; stolen laptop, camera equipment, and jewelry."
+        else:
+            return f"Minor grease fire in apartment kitchen in {state}. Scorched cabinetry and localized smoke damage to living area."
+    elif "business" in c_type or "commercial" in c_type:
+        return f"Commercial property HVAC roof unit leakage in {state} resulting in damaged ceiling tiles, office equipment, and inventory loss."
+    else:
+        return f"Reported {claim_type} loss scenario in {state} with claimed damages totaling ${amount:,.2f}."
+
 
 st.sidebar.subheader("Quick Test Data")
 if st.sidebar.button("🎲 Load Random Claim Sample"):
     rand_row = df_sample.sample(1).iloc[0].to_dict()
+    c_type_val = str(rand_row.get("claim_type", "Auto")).strip().capitalize()
+    c_state_val = str(rand_row.get("state", "CA")).strip().upper()
+    c_amt_val = float(rand_row.get("claim_amount", 3500.0))
+
     st.session_state["claim_id"] = str(rand_row.get("claim_id", "CLM-NEW-001"))
     st.session_state["policy_id"] = str(rand_row.get("policy_id", "POL-100234"))
-    st.session_state["claim_type"] = str(rand_row.get("claim_type", "Auto")).strip().capitalize()
-    st.session_state["state"] = str(rand_row.get("state", "CA")).strip().upper()
+    st.session_state["claim_type"] = c_type_val
+    st.session_state["state"] = c_state_val
     st.session_state["tenure"] = float(rand_row.get("policyholder_tenure_years", 3.0))
     st.session_state["prev_claims"] = int(rand_row.get("previous_claims_count", 0))
-    st.session_state["amount"] = float(rand_row.get("claim_amount", 3500.0))
+    st.session_state["amount"] = c_amt_val
     st.session_state["deductible"] = float(rand_row.get("deductible", 500.0))
     st.session_state["incident_date"] = str(rand_row.get("incident_date", "2024-01-10"))
     st.session_state["claim_filed_date"] = str(rand_row.get("claim_filed_date", "2024-01-14"))
+    st.session_state["description"] = generate_sample_description(c_type_val, c_amt_val, c_state_val)
     st.sidebar.success(f"Loaded: {st.session_state['claim_id']}")
 
 # Title Banner
@@ -135,7 +220,13 @@ with tab1:
         inc_date = st.text_input("Incident Date (YYYY-MM-DD)", value=st.session_state.get("incident_date", "2024-02-01"))
         filed_date = st.text_input("Claim Filed Date (YYYY-MM-DD)", value=st.session_state.get("claim_filed_date", "2024-02-05"))
 
-    desc = st.text_area("Incident Description / Notes", value="Vehicle rear fender damaged in bumper collision at traffic intersection.")
+    desc = st.text_area(
+        "Incident Description / Notes",
+        value=st.session_state.get(
+            "description",
+            "Vehicle rear fender damaged in bumper collision at traffic intersection."
+        )
+    )
 
     claim_payload = {
         "claim_id": cid,
@@ -171,7 +262,7 @@ with tab1:
             judge = workflow_out["llm_as_judge_review"]
 
             st.markdown("---")
-            m1, m2, m3, m4 = st.columns(4)
+            m1, m2, m3, m4 = st.columns([1.3, 0.9, 0.9, 1.0])
             m1.metric("Priority Tier", triage["priority_tier"])
             m2.metric("Target SLA", f"{triage['target_sla_resolution_hours']} Hours")
             m3.metric("Fraud Risk Score", f"{risk['fraud_probability_percent']}%")
@@ -181,6 +272,41 @@ with tab1:
             judge_metric_label = "🤖 LLM Judge Score" if is_live_llm else "🛡️ Guardrail Score"
             judge_help = "Evaluated via live OpenAI LLM critique + compliance rules." if is_live_llm else "Evaluated via deterministic rule-based & financial invariant checks (Offline Fallback Mode)."
             m4.metric(judge_metric_label, f"{judge['overall_quality_score']} / 10.0", help=judge_help)
+
+            if workflow_out.get("workflow_engine") == "LangGraph":
+                route_badge = workflow_out.get("workflow_status", "COMPLETED")
+                path_list = workflow_out.get("execution_path", [])
+                
+                step_labels = {
+                    "intake_and_classification": "Intake & Triage",
+                    "retrieval_and_ml": "Hybrid Search & ML",
+                    "investigation_agent": "Investigation",
+                    "risk_agent": "Risk Assessment",
+                    "recommendation_agent": "Recommendation",
+                    "quality_audit": "LLM Quality Audit",
+                    "settlement_terminal": "Standard Settlement",
+                    "siu_referral_terminal": "SIU Investigation",
+                    "manual_adjuster_review_terminal": "Adjuster Worklist",
+                    "audit_supervisor_terminal": "Supervisor Audit",
+                }
+                pretty_steps = [step_labels.get(s, s.replace("_", " ").title()) for s in path_list]
+                flow_html = '<span class="step-arrow">➔</span>'.join([f'<span class="step-pill">{s}</span>' for s in pretty_steps])
+                
+                status_label = route_badge.replace("_", " ").title()
+                status_color = "#03543F" if "SETTLEMENT" in route_badge else ("#9B1C1C" if "SIU" in route_badge else "#854D0E")
+                status_bg = "#DEF7EC" if "SETTLEMENT" in route_badge else ("#FDE8E8" if "SIU" in route_badge else "#FEF08A")
+
+                st.markdown(f"""
+                <div class="langgraph-card">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-wrap:wrap; gap:8px;">
+                        <span>🕸️ <strong>Orchestration Engine:</strong> <span style="color:#2563EB; font-weight:600;">LangGraph StateGraph</span></span>
+                        <span><strong>Routing Verdict:</strong> <span style="background:{status_bg}; color:{status_color}; padding:3px 12px; border-radius:12px; font-weight:600; font-size:0.84rem;">{status_label}</span></span>
+                    </div>
+                    <div style="color:#475569; font-size:0.84rem; line-height:1.9;">
+                        <strong>Execution Path:</strong> {flow_html}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
 
             # Helper to prevent KaTeX LaTeX math mode from corrupting currency text
             def safe_txt(t):
@@ -193,7 +319,8 @@ with tab1:
                 if inv["key_precedents"]:
                     st.markdown("**Historical Precedent Clustered Claims:**")
                     for p in inv["key_precedents"]:
-                        st.markdown(f"- `{safe_txt(p)}`")
+                        clean_p = str(p).replace("\\$", "$")
+                        st.markdown(f"- 📄 `{clean_p}`")
 
             # Agent 2: Risk Assessment
             with st.expander("⚠️ Agent 2: Risk & Fraud Assessment", expanded=True):

@@ -68,7 +68,7 @@ ProjectRepository/
 │   ├── agents/
 │   │   ├── __init__.py
 │   │   ├── classification_agent.py  # Triage and priority scoring agent
-│   │   └── multi_agent_workflow.py  # 4-Agent sequential workflow + LLM-as-Judge
+│   │   └── multi_agent_workflow.py  # LangGraph StateGraph multi-agent orchestration + LLM-as-Judge
 │   ├── rag/
 │   │   ├── __init__.py
 │   │   ├── embeddings.py            # OpenAI & dense embedding generator

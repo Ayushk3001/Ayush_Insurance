@@ -14,6 +14,7 @@ class ClaimVectorStore:
     def __init__(self, persist_dir: Optional[str] = None):
         self.persist_dir = str(persist_dir or settings.CHROMA_DIR)
         os.makedirs(self.persist_dir, exist_ok=True)
+        self.cache_file = os.path.join(self.persist_dir, "claim_vectors_cache.pkl")
         self.collection_name = "insurance_claims_100m_sample"
         
         self.dimension: int = 1536
@@ -22,6 +23,37 @@ class ClaimVectorStore:
         self.metadatas: List[Dict[str, Any]] = []
         self.embedding_matrix: Optional[np.ndarray] = None
         self._id_index: set = set()
+        self._load_cache()
+
+    def _load_cache(self):
+        """Load persisted embeddings and metadata from disk if available."""
+        if os.path.exists(self.cache_file):
+            try:
+                import pickle
+                with open(self.cache_file, "rb") as f:
+                    data = pickle.load(f)
+                self.ids = data.get("ids", [])
+                self.documents = data.get("documents", [])
+                self.metadatas = data.get("metadatas", [])
+                self.embedding_matrix = data.get("embedding_matrix", None)
+                self._id_index = set(self.ids)
+            except Exception:
+                pass
+
+    def _save_cache(self):
+        """Persist embeddings and metadata to disk."""
+        try:
+            import pickle
+            data = {
+                "ids": self.ids,
+                "documents": self.documents,
+                "metadatas": self.metadatas,
+                "embedding_matrix": self.embedding_matrix,
+            }
+            with open(self.cache_file, "wb") as f:
+                pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
+        except Exception:
+            pass
 
     def count(self) -> int:
         return len(self.ids)
@@ -86,6 +118,7 @@ class ClaimVectorStore:
         self.ids.extend(new_ids)
         self.documents.extend(new_docs)
         self.metadatas.extend(new_metas)
+        self._save_cache()
 
     def search_by_vector(
         self,
