@@ -86,3 +86,38 @@ def test_langgraph_conditional_routing_flagged_for_audit():
     }
     route = multi_agent_workflow._route_after_audit(state)
     assert route == "flagged_for_audit"
+
+
+def test_langgraph_conditional_routing_claim_within_deductible():
+    """Verify claims within the deductible route to manual adjuster review, not standard settlement disbursement."""
+    claim = {
+        "claim_id": "CLM-LG-DEDUCTIBLE",
+        "policy_id": "POL-10003",
+        "claim_type": "Auto",
+        "state": "CA",
+        "policyholder_tenure_years": 3.0,
+        "previous_claims_count": 0,
+        "incident_date": "2024-02-01",
+        "claim_filed_date": "2024-02-02",
+        "claim_amount": 400.0,
+        "deductible": 500.0,
+        "description": "Minor door ding in parking lot."
+    }
+    result = multi_agent_workflow.process_claim(claim)
+    assert result["recommendation"]["decision"] == "CLAIM_WITHIN_DEDUCTIBLE"
+    assert "manual_adjuster_review_terminal" in result["execution_path"]
+    assert result["workflow_status"] == "ROUTED_TO_MANUAL_ADJUSTER_REVIEW"
+    assert result["routing_destination"] == "ADJUSTER_WORKLIST"
+
+
+def test_langgraph_fail_closed_routing():
+    """Verify that any unrecognized or missing decision defaults safely to manual review (fail-closed)."""
+    state_unknown: ClaimWorkflowState = {
+        "claim_data": {"claim_amount": 1000.0, "deductible": 500.0},
+        "recommendation": {"decision": "UNKNOWN_CUSTOM_STATUS"},
+        "llm_as_judge_review": {"verdict": "PASS"},
+        "execution_path": []
+    }
+    route = multi_agent_workflow._route_after_audit(state_unknown)
+    assert route == "manual_adjuster_review"
+

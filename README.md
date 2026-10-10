@@ -67,8 +67,20 @@ ProjectRepository/
 │   │   └── routes.py                # FastAPI endpoints
 │   ├── agents/
 │   │   ├── __init__.py
-│   │   ├── classification_agent.py  # Triage and priority scoring agent
-│   │   └── multi_agent_workflow.py  # LangGraph StateGraph multi-agent orchestration + LLM-as-Judge
+│   │   ├── state.py                 # ClaimWorkflowState TypedDict definition
+│   │   ├── edges.py                 # route_after_audit fail-closed conditional router
+│   │   ├── graph.py                 # StateGraph definition and compiled runner
+│   │   ├── nodes/                   # 7 Focused functional agent nodes
+│   │   │   ├── intake_classification.py
+│   │   │   ├── retrieval_ml.py
+│   │   │   ├── investigation.py
+│   │   │   ├── risk_assessment.py
+│   │   │   ├── recommendation.py
+│   │   │   ├── quality_audit.py
+│   │   │   └── terminal.py
+│   │   ├── utils.py                 # LLM chat completion & schema parsing
+│   │   ├── classification_agent.py  # Standalone priority scoring agent
+│   │   └── multi_agent_workflow.py  # LangGraph facade & legacy workflow wrapper
 │   ├── rag/
 │   │   ├── __init__.py
 │   │   ├── embeddings.py            # OpenAI & dense embedding generator
@@ -234,14 +246,36 @@ Empirical measurement results over 2,000 active indexed vectors with 25 warm-up 
 | **Internal Hybrid RRF Fusion** | 10.91 ms | 13.52 ms | 14.10 ms | 18.58 ms | 23.07 ms |
 | **End-to-End Hybrid Search (Live API, 50 runs)** | 290.21 ms | 303.59 ms | 316.47 ms | 403.10 ms | 440.90 ms |
 
+### LangGraph Multi-Agent Orchestration & Fail-Closed Routing
+The multi-agent workflow is structured as an enterprise LangGraph `StateGraph` with dynamic conditional edge routing via `route_after_audit()`:
+1. **Intake & Triage (`intake_and_classification`)** → Classifies LOB, SLA turnaround target (24h to 120h), and initial priority tier.
+2. **Hybrid RAG & ML (`retrieval_and_ml`)** → Queries historical precedents and runs calibrated risk regression/classification.
+3. **Investigation Agent (`investigation_agent`)** → Gathers line-of-business loss indicators and flags inconsistencies.
+4. **Risk Assessment Agent (`risk_agent`)** → Synthesizes calibrated posterior fraud probabilities and underwriting risk tiers.
+5. **Recommendation Agent (`recommendation_agent`)** → Determines actionable handling pathway and strictly enforces net payout ceiling $\max(0, \text{claim} - \text{deductible})$.
+6. **Quality & Compliance Audit (`quality_audit`)** → Enforces regulatory compliance and deterministic mathematical invariants.
+7. **Dynamic Edge Router (`route_after_audit`)**:
+   - `SIU_REFERRAL` has highest precedence → routes to `siu_referral_terminal` (`SIU_INVESTIGATION_QUEUE`).
+   - Audit `FLAGGED_FOR_AUDIT` → escalates to `audit_supervisor_terminal` (`SUPERVISOR_AUDIT_QUEUE`).
+   - `CLAIM_WITHIN_DEDUCTIBLE` ($0 net indemnity) or `MANUAL_ADJUSTER_REVIEW` → routes to `manual_adjuster_review_terminal` (`ADJUSTER_WORKLIST`).
+   - `ROUTINE_REVIEW` / `AUTO_APPROVE` → routes to `settlement_terminal` (`STANDARD_SETTLEMENT_QUEUE`).
+   - **Fail-Closed Safety:** Any unrecognized or custom decision status automatically defaults to `manual_adjuster_review_terminal` rather than authorizing disbursement.
+
+### Hybrid Quality Audit: Deterministic Invariants + LLM Qualitative Critique
+ClaimLens applies a defense-in-depth quality review:
+- **Deterministic Compliance Invariants:** Strictly validates financial math (zero unauthorized payouts, net bounds, zero-dollar deductible settlements) and checklist domain relevance. These hard invariant checks deterministically govern the `PASS` vs. `FLAGGED_FOR_AUDIT` verdict, preventing stochastic LLM hallucinations from overriding financial policies.
+- **Augmented LLM Qualitative Critique:** When OpenAI credentials are live, `gpt-5-nano` provides natural language reasoning critiques, identifying specific missing evidence, and cross-referencing claim narratives against adjusters' guidelines.
+
+### Vector Store Architecture & Persistent Disk Cache
+- **In-Memory NumPy Engine:** Historical claim precedents (2,000 indexed records) are queried using normalized 1536-dimensional cosine similarity over a dense NumPy matrix. This avoids brittle native C++ SQLite dependencies on Windows environments.
+- **Persistent Local Caching:** Pre-computed embeddings and metadata are persisted to disk (`claim_vectors_cache.pkl`), cutting cold-start initialization from 34.0s to **0.02s (~1,700x speedup)**.
+- **Deterministic Offline Fallback:** When external LLM APIs are offline or unconfigured, `EmbeddingService` generates deterministic, unit-normalized 1536-dim pseudo-embeddings via SHA256/MD5 token hashing, ensuring 100% test reproducibility and zero pipeline crashes. In production deployments, live OpenAI `text-embedding-3-small` dense vectors are queried directly.
+
 ### Dual-Probability Underwriting Policy
 ClaimLens differentiates between the **raw Random Forest probability** (uncalibrated leaf proportion) and the **calibrated posterior risk** (via 5-fold `CalibratedClassifierCV` sigmoid calibration adjusted to the 8.5% industry fraud prevalence):
 1. **Low Risk Tier (Calibrated < 8.5% AND Raw < 38.0%):** Routinely routed to `AUTO_APPROVE` fast-track if loss $\le \$5,000$, tenure $\ge 1.0\text{ year}$, and 0 prior claims. Net payout equals `Claim Amount - Deductible`.
 2. **Moderate Risk Tier (Calibrated $\ge 8.5\%$ OR Raw $\ge 38.0\%$ OR Loss > $10,000):** Routed to `MANUAL_ADJUSTER_REVIEW` for contractor/estimate audits.
 3. **High Risk Tier (Calibrated $\ge 18.0\%$ OR Raw $\ge 45.0\%$ OR [Loss $\ge \$50,000$ with Raw $\ge 40.0\%$ in Moderate/High Risk]):** Immediately routed to `SIU_REFERRAL`. Payment disbursement is strictly withheld ($0.00 authorized payout) pending anti-fraud investigation. Legitimate high-value losses ($\ge \$50,000$) with Low/Moderate risk profiles are routed to `MANUAL_ADJUSTER_REVIEW` for senior adjuster review and contractor estimate verification.
-
-### Deterministic Offline Embedding Fallback
-When external LLM credentials (`OPENAI_API_KEY`) are unreachable or unconfigured (offline development, CI/CD runners), `EmbeddingService` generates deterministic, unit-normalized 1536-dimensional pseudo-embeddings via SHA256/MD5 token seeding. This ensures 100% test reproducibility and zero pipeline crashes offline. In production deployments with valid keys, live OpenAI `text-embedding-3-small` dense vectors are queried directly.
 
 ### Re-Generate Deliverables (PDFs & Presentation Deck)
 ```bash
