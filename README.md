@@ -446,18 +446,3 @@ curl -X GET http://127.0.0.1:8000/claims/sample
 3. **Scope of Retraining (Local ML Models Only):** The automated retraining pipeline exclusively refits and recalibrates local tabular machine learning models (scikit-learn `RandomForestRegressor`, `CalibratedClassifierCV`, and duration regressors persisted in `claims_models_bundle.pkl`). It **does NOT** fine-tune or modify third-party cloud LLM weights (e.g. OpenAI GPT-5-nano or Gemini). Cloud LLMs operate strictly via zero/few-shot in-context learning with dynamic Hybrid RAG context injection, ensuring fast, deterministic, zero-degradation performance.
 
 ---
-
-
-## 10. Submission Checklist Verification
-
-- [x] **Source code is complete** (FastAPI backend, Streamlit UI, Multi-Agent workflow, ML models, RAG)
-- [x] **README is updated** (All 12 sections from guidelines fulfilled)
-- [x] **Architecture diagram included** (`architecture/Architecture_Diagram.pdf` & `architecture/ClaimLens_Architecture_Diagram.png`)
-- [x] **Design document included** (`design/Design_Document.pdf`)
-- [x] **Presentation deck included** (`presentation/ClaimLens_Presentation.pptx`)
-- [x] **APIs are working** (All endpoints tested and verified)
-- [x] **Sample data included** (`data/sample_data/claims_sample.parquet` and `.csv`)
-- [x] **Evaluation reports included** (`docs/Evaluation_Report.pdf` with LLM-as-Judge benchmark metrics)
-- [x] **All deliverables follow naming conventions**
-- [x] **Local deployment instructions are included**
-- [x] **No secrets or API keys committed**
