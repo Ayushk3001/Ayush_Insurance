@@ -116,7 +116,8 @@ class FeedbackService:
         import shutil
         from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
         from sklearn.calibration import CalibratedClassifierCV
-        from sklearn.metrics import accuracy_score, brier_score_loss
+        from sklearn.metrics import accuracy_score, brier_score_loss, precision_score, recall_score, f1_score
+        from sklearn.impute import SimpleImputer
 
         base_df = load_claims_dataset()
         train_pool, golden_df = self._get_or_create_golden_eval_set(base_df)
@@ -131,43 +132,59 @@ class FeedbackService:
             match = df_augmented[df_augmented["claim_id"] == cid]
             if not match.empty:
                 idx = match.index[0]
-                # Label integrity: Fraud target is strictly modified ONLY when explicitly confirmed
-                # by a verified auditor or investigator (True=confirmed fraud, False=exonerated).
-                # Operational approvals or SIU referrals WITHOUT explicit confirmation do NOT alter forensic labels.
                 if conf_fraud is not None:
                     df_augmented.at[idx, "is_fraud_flagged_ground_truth"] = bool(conf_fraud)
                 
                 if adj_amt is not None and float(adj_amt) > 0:
                     df_augmented.at[idx, "claim_amount"] = float(adj_amt)
 
-        # 3. Fit Candidate Models strictly on training pool
-        X_train = ml_service._prepare_features(df_augmented, is_training=True)
+        # Minimum sample & class-count checks to prevent training degradation
         y_fraud_train = df_augmented["is_fraud_flagged_ground_truth"].astype(int).values
-        y_amount_train = df_augmented["claim_amount"].fillna(df_augmented["claim_amount"].median()).values
+        if len(y_fraud_train) < 50 or y_fraud_train.sum() < 5 or (len(y_fraud_train) - y_fraud_train.sum()) < 5:
+            return {
+                "status": "skipped",
+                "message": "Insufficient class counts in training pool to fit candidate models safely.",
+                "active_version": getattr(ml_service, "model_version", "v1.0"),
+                "samples_used": 0
+            }
+
+        # 3. Fit Candidate Models strictly on training pool
+        X_train_amt = ml_service._prepare_features(df_augmented, is_training=True, include_amount_features=False)
+        X_train_fraud = ml_service._prepare_features(df_augmented, is_training=True, include_amount_features=True)
+        target_imputer = SimpleImputer(strategy="median").fit(df_augmented[["claim_amount"]])
+        y_amount_train = target_imputer.transform(df_augmented[["claim_amount"]]).ravel()
 
         cand_amount = RandomForestRegressor(n_estimators=60, max_depth=8, random_state=42, n_jobs=-1)
-        cand_amount.fit(X_train, y_amount_train)
+        cand_amount.fit(X_train_amt, y_amount_train)
 
         cand_base_fraud = RandomForestClassifier(n_estimators=80, max_depth=7, class_weight="balanced", random_state=42, n_jobs=-1)
-        cand_base_fraud.fit(X_train, y_fraud_train)
+        cand_base_fraud.fit(X_train_fraud, y_fraud_train)
 
         cand_calibrated = CalibratedClassifierCV(estimator=cand_base_fraud, method="sigmoid", cv=5)
-        cand_calibrated.fit(X_train, y_fraud_train)
+        cand_calibrated.fit(X_train_fraud, y_fraud_train)
 
         # 4. Fair Benchmark Evaluation on Genuinely Untouched Golden Evaluation Set
-        X_eval = ml_service._prepare_features(golden_df, is_training=False)
+        X_eval = ml_service._prepare_features(golden_df, is_training=False, include_amount_features=True)
         y_fraud_eval = golden_df["is_fraud_flagged_ground_truth"].astype(int).values
 
         cand_eval_preds = cand_calibrated.predict(X_eval)
         cand_eval_acc = accuracy_score(y_fraud_eval, cand_eval_preds)
         cand_eval_probs = cand_calibrated.predict_proba(X_eval)[:, 1]
         cand_eval_brier = brier_score_loss(y_fraud_eval, cand_eval_probs)
+        cand_eval_siu = (cand_eval_probs >= 0.18).astype(int)
+        cand_eval_prec = float(precision_score(y_fraud_eval, cand_eval_siu, zero_division=0))
+        cand_eval_rec = float(recall_score(y_fraud_eval, cand_eval_siu, zero_division=0))
+        cand_eval_f1 = float(f1_score(y_fraud_eval, cand_eval_siu, zero_division=0))
 
         curr_ver = getattr(ml_service, "model_version", "v1.0")
         base_eval_preds = ml_service.fraud_model.predict(X_eval)
         base_eval_acc = accuracy_score(y_fraud_eval, base_eval_preds)
         base_eval_probs = ml_service.fraud_model.predict_proba(X_eval)[:, 1]
         base_eval_brier = brier_score_loss(y_fraud_eval, base_eval_probs)
+        base_eval_siu = (base_eval_probs >= 0.18).astype(int)
+        base_eval_prec = float(precision_score(y_fraud_eval, base_eval_siu, zero_division=0))
+        base_eval_rec = float(recall_score(y_fraud_eval, base_eval_siu, zero_division=0))
+        base_eval_f1 = float(f1_score(y_fraud_eval, base_eval_siu, zero_division=0))
 
         # 5. Promotion Gate: Reject Candidate if Validation Brier Score Degrades
         if cand_eval_brier > (base_eval_brier + 1e-4):
@@ -179,6 +196,12 @@ class FeedbackService:
                 "candidate_validation_brier": round(float(cand_eval_brier), 4),
                 "base_validation_accuracy": round(float(base_eval_acc), 4),
                 "candidate_validation_accuracy": round(float(cand_eval_acc), 4),
+                "base_validation_f1": round(base_eval_f1, 4),
+                "candidate_validation_f1": round(cand_eval_f1, 4),
+                "base_validation_precision": round(base_eval_prec, 4),
+                "candidate_validation_precision": round(cand_eval_prec, 4),
+                "base_validation_recall": round(base_eval_rec, 4),
+                "candidate_validation_recall": round(cand_eval_rec, 4),
                 "golden_benchmark_samples": len(golden_df),
                 "feedback_records_integrated": len(data),
                 "timestamp": datetime.utcnow().isoformat() + "Z"
@@ -245,6 +268,9 @@ class FeedbackService:
             "base_validation_brier": round(float(base_eval_brier), 4),
             "candidate_validation_brier": round(float(cand_eval_brier), 4),
             "candidate_validation_accuracy": round(float(cand_eval_acc), 4),
+            "candidate_validation_f1": round(cand_eval_f1, 4),
+            "candidate_validation_precision": round(cand_eval_prec, 4),
+            "candidate_validation_recall": round(cand_eval_rec, 4),
             "model_artifact": str(versioned_file.name),
             "atomic_promotion_verified": True,
             "timestamp": datetime.utcnow().isoformat() + "Z"

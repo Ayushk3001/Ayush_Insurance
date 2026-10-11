@@ -288,3 +288,107 @@ def test_authoritative_json_files_pass_strict_validation():
     bench_data = load_authoritative_latency_benchmark()
     assert bench_data["environment"]["active_indexed_vectors"] == 2000
     assert bench_data["environment"]["embedding_dimension"] == 1536
+
+
+# ==============================================================================
+# 3. COMPREHENSIVE BUSINESS BEHAVIOR ASSERTIONS
+# ==============================================================================
+
+def test_full_workflow_siu_referral():
+    """Verify SIU referral through the full multi-agent workflow for high-risk suspicious losses."""
+    from src.agents.multi_agent_workflow import multi_agent_workflow
+
+    high_risk_claim = {
+        "claim_id": "CLM-TEST-SIU-01",
+        "policy_id": "POL-9901",
+        "claim_type": "Business",
+        "state": "FL",
+        "policyholder_tenure_years": 0.2,
+        "previous_claims_count": 4,
+        "incident_date": "2024-01-10",
+        "claim_filed_date": "2024-03-25",
+        "claim_amount": 85000.0,
+        "deductible": 1000.0,
+        "description": "Total business inventory destroyed by electrical fire right after inception."
+    }
+
+    result = multi_agent_workflow.process_claim(high_risk_claim)
+    rec = result["recommendation"]
+    assert rec["decision"] == "SIU_REFERRAL", f"Expected SIU_REFERRAL, got {rec['decision']}"
+    assert rec["recommended_net_payout"] == 0.0, "SIU referral must withhold disbursement"
+    assert result["routing_destination"] == "SIU_INVESTIGATION_QUEUE"
+    assert result["workflow_status"] == "ROUTED_TO_SPECIAL_INVESTIGATION_UNIT"
+
+
+def test_full_workflow_claim_at_or_below_deductible():
+    """Verify claims at or below deductible are routed to manual review with zero net indemnity."""
+    from src.agents.multi_agent_workflow import multi_agent_workflow
+
+    deductible_claim = {
+        "claim_id": "CLM-TEST-DED-01",
+        "policy_id": "POL-9902",
+        "claim_type": "Auto",
+        "state": "CA",
+        "policyholder_tenure_years": 4.0,
+        "previous_claims_count": 0,
+        "incident_date": "2024-03-01",
+        "claim_filed_date": "2024-03-02",
+        "claim_amount": 450.0,
+        "deductible": 500.0,
+        "description": "Minor bumper scrape in garage."
+    }
+
+    result = multi_agent_workflow.process_claim(deductible_claim)
+    rec = result["recommendation"]
+    assert rec["decision"] == "CLAIM_WITHIN_DEDUCTIBLE"
+    assert rec["recommended_net_payout"] == 0.0
+    assert result["workflow_status"] == "ROUTED_TO_MANUAL_ADJUSTER_REVIEW"
+    assert result["routing_destination"] == "ADJUSTER_WORKLIST"
+
+
+def test_full_workflow_financial_invariant_violation_audit_flag():
+    """Verify financial invariant violations cause audit flags and route to FLAGGED_FOR_AUDIT."""
+    from src.agents.multi_agent_workflow import multi_agent_workflow
+
+    state = {
+        "claim_data": {"claim_amount": 3000.0, "deductible": 500.0},
+        "recommendation": {"decision": "AUTO_APPROVE", "recommended_net_payout": 3000.0, "net_settlement_ceiling": 3000.0},
+        "llm_as_judge_review": {
+            "verdict": "FLAGGED_FOR_AUDIT",
+            "detected_issues": ["Ceiling exceeded deductible invariant"]
+        },
+        "execution_path": []
+    }
+    route = multi_agent_workflow._route_after_audit(state)
+    assert route == "flagged_for_audit"
+
+
+def test_full_workflow_unknown_decision_defaults_to_manual_review():
+    """Verify unknown decisions default safely to manual review (fail-closed security)."""
+    from src.agents.multi_agent_workflow import multi_agent_workflow
+
+    state = {
+        "claim_data": {"claim_amount": 2000.0, "deductible": 500.0},
+        "recommendation": {"decision": "UNKNOWN_CUSTOM_DECISION"},
+        "llm_as_judge_review": {"verdict": "PASS"},
+        "execution_path": []
+    }
+    route = multi_agent_workflow._route_after_audit(state)
+    assert route == "manual_adjuster_review"
+
+
+def test_missing_judge_metric_strictly_fails_evaluation_without_fallback():
+    """Verify missing or invalid judge metrics strictly fail evaluation rather than receiving fallbacks."""
+    # Missing metric raises ValueError
+    bad_judge = {
+        "verdict": "PASS",
+        "overall_quality_score": 9.0,
+        "metric_scores": {"factual_consistency": 9.0, "completeness": 9.0}
+    }
+    with pytest.raises(ValueError, match="missing required metric 'policy_compliance'"):
+        validate_judge_metrics(bad_judge, test_id="TC-MISSING")
+
+    # None or non-dict raises ValueError
+    with pytest.raises(ValueError, match="must be a dictionary"):
+        validate_judge_metrics(None, test_id="TC-NONE")
+

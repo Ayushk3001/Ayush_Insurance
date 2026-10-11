@@ -212,17 +212,30 @@ def run_recommendation_agent(
             )
             steps = build_claim_checklist(claim_data, deductible)
         else:
-            decision = "ROUTINE_REVIEW"
-            action = "Proceed through routine claim validation before any settlement authorization."
-            fast_track = True
-            auth_status = "PENDING_ROUTINE_COVERAGE_VALIDATION"
-            recommended_net = max_net_payout
-            authorized_net = 0.0
-            payout_range = (
-                f"Pending coverage and estimate validation; "
-                f"simplified net ceiling: ${max_net_payout:,.2f}"
-            )
-            steps = build_claim_checklist(claim_data, deductible)
+            if amount <= 5000.0 and previous_claims == 0 and tenure >= 1.0 and not high_risk and not moderate_risk:
+                decision = "AUTO_APPROVE"
+                action = "Fast-track straight-through settlement approved based on clean loss history and low-risk profile."
+                fast_track = True
+                auth_status = "ELIGIBLE_FAST_TRACK_DISBURSEMENT"
+                recommended_net = max_net_payout
+                authorized_net = max_net_payout
+                payout_range = (
+                    f"${max_net_payout:,.2f} "
+                    f"(simplified net ceiling: ${max_net_payout:,.2f})"
+                )
+                steps = build_claim_checklist(claim_data, deductible)
+            else:
+                decision = "ROUTINE_REVIEW"
+                action = "Proceed through routine claim validation before any settlement authorization."
+                fast_track = True
+                auth_status = "PENDING_ROUTINE_COVERAGE_VALIDATION"
+                recommended_net = max_net_payout
+                authorized_net = 0.0
+                payout_range = (
+                    f"Pending coverage and estimate validation; "
+                    f"simplified net ceiling: ${max_net_payout:,.2f}"
+                )
+                steps = build_claim_checklist(claim_data, deductible)
 
     llm_reasoning = None
     system_prompt = (

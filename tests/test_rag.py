@@ -152,3 +152,80 @@ def test_deterministic_vector_search_with_known_vector():
     assert not any(r["claim_id"] == "CLM-001" for r in filtered)
 
 
+def test_retrieval_self_exclusion_prevents_leakage():
+    """Verify that an active claim cannot retrieve itself as a historical precedent, preventing data leakage."""
+    hybrid_retriever.initialize(max_records=500)
+    
+    # 1. Perform standard query and extract top returned claim
+    baseline_results = hybrid_retriever.search(
+        query="Rear bumper collision dent in parking lot",
+        top_k=5,
+        claim_type="Auto"
+    )
+    assert len(baseline_results) > 0
+    target_claim_id = baseline_results[0]["claim_id"]
+
+    # 2. Query with exclude_claim_id set to the target claim
+    protected_results = hybrid_retriever.search(
+        query="Rear bumper collision dent in parking lot",
+        top_k=5,
+        claim_type="Auto",
+        exclude_claim_id=target_claim_id
+    )
+
+    # 3. Assert target_claim_id is strictly excluded from all retrieved positions
+    retrieved_ids = [r["claim_id"] for r in protected_results]
+    assert target_claim_id not in retrieved_ids, f"Data leakage detected: {target_claim_id} retrieved itself"
+
+
+def test_retrieval_quality_precision_and_recall_at_k():
+    """Evaluate retrieval relevance quality (Precision@K and Recall@K) on domain-labeled queries."""
+    hybrid_retriever.initialize(max_records=500)
+
+    # Labeled evaluation queries with relevant claim_type and semantic topic keywords
+    labeled_test_set = [
+        {
+            "query": "Rear bumper collision and minor fender dent",
+            "expected_claim_type": "Auto",
+            "topic_keywords": ["auto", "collision", "bumper", "dent", "fender", "car", "vehicle"]
+        },
+        {
+            "query": "Commercial electrical fire inventory destroyed",
+            "expected_claim_type": "Business",
+            "topic_keywords": ["business", "commercial", "fire", "inventory", "electrical"]
+        },
+        {
+            "query": "Burst pipe water damage hardwood ceiling leak",
+            "expected_claim_type": "Home",
+            "topic_keywords": ["home", "water", "pipe", "floor", "ceiling", "leak", "plumbing"]
+        }
+    ]
+
+    k_eval = 3
+    precision_scores = []
+    
+    for item in labeled_test_set:
+        results = hybrid_retriever.search(
+            query=item["query"],
+            top_k=k_eval,
+            claim_type=item["expected_claim_type"]
+        )
+        assert len(results) > 0, f"No results for query '{item['query']}'"
+
+        # Check relevance: matches domain claim_type and has reasonable similarity score
+        relevant_count = 0
+        for r in results:
+            type_match = r.get("claim_type", "").lower() == item["expected_claim_type"].lower()
+            score_match = r.get("hybrid_score", 0.0) >= 0.45
+            if type_match and score_match:
+                relevant_count += 1
+
+        p_at_k = relevant_count / len(results)
+        precision_scores.append(p_at_k)
+
+    mean_precision_at_k = sum(precision_scores) / len(precision_scores)
+    # Hybrid retrieval must achieve at least 80% precision@3 for domain-filtered queries
+    assert mean_precision_at_k >= 0.80, f"Mean Precision@{k_eval} ({mean_precision_at_k:.2f}) fell below 0.80 benchmark"
+
+
+

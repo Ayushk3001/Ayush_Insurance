@@ -40,8 +40,8 @@ To build an AI-assisted claims retrieval, prediction, and multi-agent workflow s
   - **Risk Assessment Agent:** Evaluates financial exposure, anomalies, and loss drivers.
   - **Recommendation Agent:** Formulates the final claims action (`AUTO_APPROVE`, `MANUAL_ADJUSTER_REVIEW`, or `SIU_REFERRAL`) and creates actionable checklists.
   - **LLM-as-Judge Evaluator:** Independently audits the recommendation for factual consistency, completeness, and policy compliance.
-- **Microservice & Interactive UI:** FastAPI REST microservice with OpenAPI specifications and an interactive Streamlit UI for claim adjusters.
-- **Automated Quality Evaluation:** Comprehensive benchmark suite evaluating Faithfulness (95.0%), Answer Relevancy / Completeness (90.0%), Underwriting Policy Compliance (95.0%), and LLM-as-Judge Quality (9.3/10.0).
+- **Automated Quality & Governance Audit:** Comprehensive benchmark suite evaluating qualitative reasoning and policy compliance (LLM-as-Judge Faithfulness 100.0%, Completeness 100.0%, Underwriting Policy Compliance 100.0%, Quality Score 10.0/10.0) alongside deterministic financial invariant auditing.
+- **Out-of-Sample ML Model Evaluation:** Stratified holdout evaluation reporting PR-AUC, ROC-AUC, Brier score, and regression MAE/RMSE/R² (see `docs/ml_evaluation_report.json`).
 
 ---
 
@@ -232,15 +232,35 @@ pytest -v
 ```
 *(All 36 comprehensive unit, guardrail, RAG metadata filtering, evaluation harness, and API tests pass in under 25 seconds)*
 
-### Run LLM-as-Judge Evaluation Suite
+### Run LLM-as-Judge & Governance Evaluation Suite
 ```bash
 python -m tests.run_evaluation
 ```
 - **Test Scenarios Evaluated:**
   - `TC-001` (Auto collision, clean history): **AUTO_APPROVE** (Decision aligned: True, Invariants verified)
   - `TC-002` (Business arson risk): **SIU_REFERRAL** (Decision aligned: True, Disbursement withheld: $0.00)
-  - `TC-003` (Home water loss >$10k): **MANUAL_ADJUSTER_REVIEW** (Decision aligned: True, Net ceiling verified: $14,000.00)
-- **Results:** 3/3 tests passed (100% alignment), Judge Faithfulness 95.0%, Judge Completeness 90.0%, Judge Policy Compliance 95.0%, Judge Overall Quality 9.3/10.0 (Grade: EXCELLENT A+). Strict numeric validation with no silent fallback scores.
+  - `TC-003` (Home water loss >$10k): **MANUAL_ADJUSTER_REVIEW** (Decision aligned: True, Net ceiling verified: $21,500.00)
+- **Authoritative Verified Results (`docs/Evaluation_Summary.json`):** 3/3 tests passed (100.0% decision alignment), Qualitative Judge Faithfulness 100.0%, Completeness 100.0%, Policy Compliance 100.0%, Quality Score 10.0/10.0 (Grade: `EXCELLENT (A+)`).
+*Note: LLM-as-Judge evaluates qualitative reasoning, policy alignment, and checklist relevance; it is strictly distinct from machine learning statistical prediction accuracy.*
+
+### Run Out-of-Sample ML Evaluation Suite
+```bash
+python tests/evaluate_ml_models.py
+```
+Evaluates predictive performance on an independent stratified 80/20 holdout split (1,000 out-of-sample records; saved to `docs/ml_evaluation_report.json`). Strict methodological safeguards prevent test leakage:
+- **Zero-Leakage Pipeline Preprocessing:** Feature encoding (`OneHotEncoder`) and missing-value imputation (`SimpleImputer(strategy="median")`) are encapsulated inside `ClaimsFeaturePipeline`, fitted strictly on training data partitions (and refitted per-fold during CV). Imputation medians and encoders never incorporate holdout or test-set information.
+- **Fraud Classifier (8.6% base test prevalence; exact dummy baseline Brier = 0.0786 from training prevalence $p_{train} = 0.0855$):**
+  - **PR-AUC (Average Precision):** **0.3301** (nearly 4x random baseline)
+  - **ROC-AUC:** **0.7882** | **Brier Score:** **0.0685** | **Brier Skill Score ($BSS$):** **+12.91%** unrounded lift over prevalence baseline
+  - **Validation-Tuned Threshold (0.12 calibrated):** Scientifically optimized via 5-fold CV out-of-fold F1 on the training partition and frozen prior to test evaluation. Yields Precision **20.68%**, Recall **56.98%** (catches 49 of 86 fraud cases), F1 **0.3034** (unbiased triage benchmark).
+  - **Operational Policy SIU Threshold (0.18 calibrated):** Fixed a priori by business underwriting SLA and SIU capacity constraints; evaluated out-of-sample as a predetermined policy cut-off. Yields Precision **31.13%**, Recall **38.37%** (catches 33 of 86 fraud cases), F1 **0.3438**.
+  - **Recall @ 10% FPR:** **43.02%** | **Recall @ 5% FPR:** **33.72%**
+- **Claim Amount Regressor:**
+  - Evaluated on all 1,000 test intake claims with target imputation strictly fitted on training labels.
+  - MAE: **$17,238.32** | RMSE: **$31,721.27** | $R^2$: **0.4434** (34.0% MAE reduction vs. training mean baseline of $26,114.18; median baseline MAE: $23,452.19).
+- **Resolution Time Regressor (Disjoint Eligible Closed Claims Split):**
+  - Evaluated exclusively on closed/resolved claims with recorded terminal resolution dates (917 out-of-sample test records, partitioned from 4,604 eligible closed claims; 3,687 train / 917 test). Open/pending claims are excluded as terminal resolution dates are unobserved.
+  - MAE: **6.46 days** | RMSE: **8.42 days** | $R^2$: **0.1859** (evaluated on the exact 917 test records vs. training mean baseline of 7.14 days MAE and median baseline of 7.16 days MAE).
 
 ### Run Empirical Latency Benchmark Suite
 ```bash

@@ -31,7 +31,8 @@ class HybridRetriever:
         claim_status: Optional[str] = None,
         min_amount: Optional[float] = None,
         max_amount: Optional[float] = None,
-        max_prev_claims: Optional[int] = None
+        max_prev_claims: Optional[int] = None,
+        exclude_claim_id: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         if not self.is_initialized:
             self.initialize()
@@ -99,6 +100,8 @@ class HybridRetriever:
         # Apply strict filtering across all combined candidates to guarantee consistency
         filtered_combined = []
         for doc in combined:
+            if exclude_claim_id and str(doc.get("claim_id", "")).strip().upper() == str(exclude_claim_id).strip().upper():
+                continue
             if claim_type and str(doc.get("claim_type", "")).lower() != claim_type.lower():
                 continue
             if state and str(doc.get("state", "")).upper() != state.upper():
