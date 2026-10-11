@@ -315,3 +315,48 @@ def test_approved_decision_does_not_alter_fraud_label_without_explicit_confirmat
         match = df_augmented[df_augmented["claim_id"] == test_cid]
         if not match.empty:
             assert match.iloc[0]["is_fraud_flagged_ground_truth"] == True
+
+def test_feedback_metrics_endpoint():
+    response = client.get("/claims/feedback/metrics")
+    assert response.status_code == 200
+    data = response.json()
+    assert "total_reviews" in data
+    assert "ai_agreement_rate_percent" in data
+    assert "decision_distribution" in data
+    assert "recent_reviews" in data
+
+def test_sample_claim_endpoint():
+    response = client.get("/claims/sample")
+    assert response.status_code == 200
+    data = response.json()
+    assert "claim_id" in data
+    assert "claim_amount" in data
+    assert "claim_type" in data
+
+def test_validation_http_400_guardrails():
+    # Chronological inversion: claim filed before incident
+    invalid_payload = {
+        "claim_type": "Auto",
+        "state": "CA",
+        "claim_amount": 1000.0,
+        "incident_date": "2024-05-15",
+        "claim_filed_date": "2024-05-01"
+    }
+    response = client.post("/claims/validate", json=invalid_payload)
+    assert response.status_code == 400
+    data = response.json()
+    assert "detail" in data
+    assert "errors" in data["detail"]
+    assert any("earlier" in err.lower() for err in data["detail"]["errors"])
+
+def test_validation_http_422_pydantic_schema():
+    # Missing required field or invalid data type
+    invalid_payload = {
+        "claim_amount": "invalid_number_string"
+    }
+    response = client.post("/claims/validate", json=invalid_payload)
+    assert response.status_code == 422
+    data = response.json()
+    assert "detail" in data
+    assert isinstance(data["detail"], list)
+

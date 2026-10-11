@@ -125,6 +125,8 @@ def get_feedback_metrics():
 @router.post("/claims/feedback/retrain")
 def retrain_model_pipeline(min_feedback_count: int = 1):
     """Trigger controlled model retraining pipeline on logged adjuster feedback."""
+    if not claims_ml_service.is_trained:
+        claims_ml_service.train_or_load()
     return feedback_service.trigger_retraining(claims_ml_service, min_feedback_count=min_feedback_count)
 
 @router.get("/claims/sample")

@@ -4,6 +4,15 @@
 
 ---
 
+### 📋 Submission & Team Details
+- **Participant / Candidate Name:** Ayush K Shetty
+- **Domain:** Property & Casualty (P&C) Insurance Claims
+- **Selected Project:** Project 7 — AI-Powered Insurance Claims Assistant
+- **GitHub Repository Naming:** `Ayush_Insurance`
+- **Submission Date:** October 2026
+
+---
+
 ## 1. Project Overview & Business Objective
 
 ### Problem Statement
@@ -58,7 +67,8 @@ To build an AI-assisted claims retrieval, prediction, and multi-agent workflow s
 ```
 ProjectRepository/
 ├── architecture/
-│   └── Architecture_Diagram.pdf     # High-level architecture flow diagram
+│   ├── Architecture_Diagram.pdf     # High-level architecture flow diagram
+│   └── ClaimLens_Architecture_Diagram.png # High-resolution architecture visual
 ├── design/
 │   └── Design_Document.pdf          # Full engineering design document
 ├── src/
@@ -113,7 +123,7 @@ ProjectRepository/
 │   ├── test_api.py                  # FastAPI route tests
 │   └── run_evaluation.py            # LLM-as-Judge benchmark evaluation suite
 ├── presentation/
-│   └── Project_Presentation.pptx    # 10-minute panel presentation deck
+│   └── ClaimLens_Presentation.pptx  # 10-minute panel presentation deck
 ├── scripts/
 │   └── generate_all_deliverables.py # Automated PDF/PPTX generator
 ├── frontend.py                      # Streamlit Adjuster Dashboard
@@ -161,8 +171,8 @@ ProjectRepository/
 
 ### 1. Clone & Navigate to Repository
 ```bash
-git clone https://github.com/Ayushk3001/claimlens.git
-cd claimlens
+git clone https://github.com/Ayushk3001/Ayush_Insurance.git
+cd Ayush_Insurance
 ```
 
 ### 2. Create and Activate Virtual Environment (Recommended)
@@ -354,13 +364,97 @@ curl -X POST http://127.0.0.1:8000/claims/hybrid-search \
 
 ---
 
+### Sample Query 4: Predictive Machine Learning Metric Estimation
+```bash
+curl -X POST http://127.0.0.1:8000/claims/predict \
+  -H "Content-Type: application/json" \
+  -d '{
+    "claim_type": "Auto",
+    "state": "CA",
+    "claim_amount": 3500.0,
+    "deductible": 500.0,
+    "policyholder_tenure_years": 4.0,
+    "previous_claims_count": 0
+  }'
+```
+**Expected Output:**
+- `predicted_claim_amount`: `~$3,680.00` (Estimated range: `$3,128.00 - $4,416.00`)
+- `predicted_days_to_resolution`: `~14.2 days`
+- `calibrated_fraud_probability_percent`: `~6.1%` (Low Risk Tier)
+- `top_risk_drivers`: Itemized list showing clean prior claims frequency and normal tenure.
+
+---
+
+### Sample Query 5: Adjuster Decision Feedback Recording
+```bash
+curl -X POST http://127.0.0.1:8000/claims/feedback \
+  -H "Content-Type: application/json" \
+  -d '{
+    "claim_id": "CLM-SAMPLE-01",
+    "adjuster_id": "ADJ-104",
+    "adjuster_decision": "Approved",
+    "agrees_with_ai": true,
+    "adjusted_amount": 2300.0,
+    "confirmed_fraud": false,
+    "notes": "Verified estimates with certified body repair shop."
+  }'
+```
+**Expected Output:**
+- Stored feedback confirmation record with generated `feedback_id` (e.g. `FB-00001`), UTC timestamp, and recorded agreement flag. Appends to `data/feedback_store.json` for MLOps retraining.
+
+---
+
+### Sample Query 6: Continuous Improvement Feedback Metrics
+```bash
+curl -X GET http://127.0.0.1:8000/claims/feedback/metrics
+```
+**Expected Output:**
+- Real-time continuous learning analytics including `total_reviews`, `ai_agreement_rate_percent` (e.g. `75.0%`), decision distribution (`Approved`, `Modified`, `Sent to SIU`), and itemized recent adjuster review logs.
+
+---
+
+### Sample Query 7: Random Dataset Claim Record Exploration
+```bash
+curl -X GET http://127.0.0.1:8000/claims/sample
+```
+**Expected Output:**
+- A random, sanitized historical claim drawn directly from the loaded 100M insurance claims dataset containing all 13 core fields (`claim_id`, `policy_id`, `claim_type`, `state`, `claim_amount`, `deductible`, `claim_status`, `is_fraud_flagged_ground_truth`, etc.).
+
+---
+
+### Complete REST API Reference & Architectural Specifications
+
+| Method | Endpoint Route | Description & Responsibility | Status Codes |
+| :---: | :--- | :--- | :---: |
+| `GET` | `/health` | System health check, indexed vector count, and ML readiness | `200` |
+| `POST` | `/claims/validate` | Input schema validation, date sanity, numeric bounds & prompt injection guardrails | `200`, `400`, `422` |
+| `POST` | `/claims/hybrid-search` | In-memory NumPy vector + BM25Okapi search with RRF reciprocal rank fusion | `200`, `422` |
+| `POST` | `/claims/classify` | Complexity category classification, SLA turnaround (24h–120h), and priority rank | `200`, `400`, `422` |
+| `POST` | `/claims/predict` | ML payout regression, duration estimation, calibrated fraud probability & drivers | `200`, `400`, `422` |
+| `POST` | `/claims/analyze` | Full LangGraph StateGraph workflow execution, recommendation, and LLM-as-Judge audit | `200`, `400`, `422`, `500` |
+| `POST` | `/claims/feedback` | Human-in-the-loop adjuster decision override recording to `feedback_store.json` | `200`, `422` |
+| `POST` | `/claims/feedback/retrain` | Controlled MLOps retraining on adjuster feedback with golden benchmark evaluation | `200`, `500` |
+| `GET` | `/claims/feedback/metrics` | Retrieve feedback metrics, agreement percentages, and decision distributions | `200` |
+| `GET` | `/claims/sample` | Sample a random historical claim from the loaded 100M dataset | `200`, `404` |
+
+#### Architectural Invariants, Authentication & Error Handling Policies:
+1. **Authentication Mode:** Operates in **Open / Unauthenticated** mode for development, automated CI evaluation (`pytest`), and local Streamlit dashboard access. For enterprise production, FastAPI `Security(HTTPBearer())` / OAuth2 Bearer Tokens (JWT via Okta/Azure AD) with Role-Based Access Control (RBAC: `Adjuster`, `SIU_Specialist`, `Supervisor`, `Admin`) is specified.
+2. **HTTP Error Codes:**
+   - **`400 Bad Request`:** Domain business logic & guardrail violations (invalid US state postal codes, chronological date inversion `claim_filed_date < incident_date`, prompt injection).
+   - **`422 Unprocessable Entity`:** FastAPI / Pydantic schema validation failures (missing required fields, non-numeric amounts, constraint violations `ge=0.0`).
+   - **`500 Internal Server Error`:** Unhandled server-side or infrastructure exceptions (redacted from client response and logged securely).
+3. **Scope of Retraining (Local ML Models Only):** The automated retraining pipeline exclusively refits and recalibrates local tabular machine learning models (scikit-learn `RandomForestRegressor`, `CalibratedClassifierCV`, and duration regressors persisted in `claims_models_bundle.pkl`). It **does NOT** fine-tune or modify third-party cloud LLM weights (e.g. OpenAI GPT-5-nano or Gemini). Cloud LLMs operate strictly via zero/few-shot in-context learning with dynamic Hybrid RAG context injection, ensuring fast, deterministic, zero-degradation performance.
+
+---
+
+
 ## 10. Submission Checklist Verification
 
 - [x] **Source code is complete** (FastAPI backend, Streamlit UI, Multi-Agent workflow, ML models, RAG)
 - [x] **README is updated** (All 12 sections from guidelines fulfilled)
-- [x] **Architecture diagram included** (`architecture/Architecture_Diagram.pdf`)
+- [x] **Architecture diagram included** (`architecture/Architecture_Diagram.pdf` & `architecture/ClaimLens_Architecture_Diagram.png`)
 - [x] **Design document included** (`design/Design_Document.pdf`)
-- [x] **Presentation deck included** (`presentation/Project_Presentation.pptx`)
+- [x] **Presentation deck included** (`presentation/ClaimLens_Presentation.pptx`)
 - [x] **APIs are working** (All endpoints tested and verified)
 - [x] **Sample data included** (`data/sample_data/claims_sample.parquet` and `.csv`)
 - [x] **Evaluation reports included** (`docs/Evaluation_Report.pdf` with LLM-as-Judge benchmark metrics)
